@@ -35,10 +35,12 @@ UA_MONTHS = {
 
 UA_WEATHER = {
     'ясно': '☀️ Ясно',
+    'чисте небо': '☀️ Чисте небо',
     'хмарно': '☁️ Хмарно',
     'похмуро': '☁️ Похмуро',
     'мінлива хмарність': '🌤🌥 Мінлива хмарність',
     'дощ': '🌧 Дощ',
+    'легкий дощ': '🌦 Легкий дощ',
     'невеликий дощ': '🌦🌧 Невеликий дощ',
     'гроза': '🌩 Гроза',
     'сніг': '❄️ Сніг',
@@ -61,6 +63,7 @@ def get_weather_forecast():
             'wind_dir': get_wind_direction_ua(item['wind']['deg']),
             'humidity': item['main']['humidity'],
             'description': ua_desc,
+            'desc_raw': weather_desc,  # для жирного
             'time': dt.strftime('%H:%M'),
         }
         if day_key not in days:
@@ -69,12 +72,12 @@ def get_weather_forecast():
             days[day_key]['night'] = entry
         if dt.hour == 15:
             days[day_key]['day'] = entry
+    # Гарантируем 5 дней, даже если нет ночи/дня
+    all_dates = sorted([datetime.date.today() + datetime.timedelta(days=i) for i in range(5)])
     forecast = []
-    for d in sorted(days.keys()):
-        if days[d]['night'] and days[d]['day']:
-            forecast.append(days[d])
-        if len(forecast) == 5:
-            break
+    for d in all_dates:
+        day = days.get(d, {'date': datetime.datetime.combine(d, datetime.time()), 'night': None, 'day': None})
+        forecast.append(day)
     return forecast
 
 async def send_weather(context: ContextTypes.DEFAULT_TYPE):
@@ -87,23 +90,41 @@ async def send_weather(context: ContextTypes.DEFAULT_TYPE):
         month_ua = UA_MONTHS[dt.month]
         msg += f"📅 {dt.day} {month_ua} ({weekday})\n"
         night = day['night']
-        msg += (
-            f"🌙 Ніч: {night['temp']:.1f}°C, {night['description']}, "
-            f"вітер {night['wind_speed']} м/с, {night['wind_dir']}, "
-            f"вологість {night['humidity']}%\n"
-        )
+        if night:
+            desc = night['description']
+            desc_raw = night.get('desc_raw', '')
+            desc_bold = f"<b>{desc}</b>" if desc_raw in [
+                'легкий дощ', 'хмарно', 'ясно', 'чисте небо', 'мінлива хмарність',
+                'похмуро', 'дощ', 'гроза', 'сніг', 'туман', 'невеликий дощ'
+            ] else desc
+            msg += (
+                f"🌙 Ніч: {night['temp']:.1f}°C, {desc_bold}, "
+                f"вітер {night['wind_speed']} м/с, {night['wind_dir']}, "
+                f"вологість {night['humidity']}%\n"
+            )
+        else:
+            msg += "🌙 Ніч: —\n"
         daypart = day['day']
-        msg += (
-            f"☀️ День: {daypart['temp']:.1f}°C, {daypart['description']}, "
-            f"вітер {daypart['wind_speed']} м/с, {daypart['wind_dir']}, "
-            f"вологість {daypart['humidity']}%\n"
-        )
+        if daypart:
+            desc = daypart['description']
+            desc_raw = daypart.get('desc_raw', '')
+            desc_bold = f"<b>{desc}</b>" if desc_raw in [
+                'легкий дощ', 'хмарно', 'ясно', 'чисте небо', 'мінлива хмарність',
+                'похмуро', 'дощ', 'гроза', 'сніг', 'туман', 'невеликий дощ'
+            ] else desc
+            msg += (
+                f"☀️ День: {daypart['temp']:.1f}°C, {desc_bold}, "
+                f"вітер {daypart['wind_speed']} м/с, {daypart['wind_dir']}, "
+                f"вологість {daypart['humidity']}%\n"
+            )
+        else:
+            msg += "☀️ День: —\n"
         if i < len(forecast) - 1:
             msg += "\n\n"
     msg += "🎯 Велетеньский прогноз \n☁️☀️ Оновлення щодня — будь у курсі 🌦\n#погода #велетень"
     try:
         print("[send_weather] Відправка повідомлення у Telegram...")
-        await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='HTML')
         print("[send_weather] Повідомлення успішно відправлено!")
     except Exception as e:
         print(f"[send_weather] Помилка при відправці повідомлення: {e}")
