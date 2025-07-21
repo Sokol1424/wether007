@@ -1,3 +1,4 @@
+import os
 import requests
 from telegram import Bot
 from telegram.ext import Application, ContextTypes
@@ -9,8 +10,8 @@ import time
 
 print("weather_bot.py стартует!")
 
-TELEGRAM_TOKEN = '8002149393:AAE37VC5nd4lZOiWM0eK8dw6EnT4WuoqiXA'
-WEATHER_API_KEY = '181eacb142fe5c4025d4d3743bc5e9ec'
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
 LAT = 49.8369
 LON = 36.7594
 CHAT_ID = '@pogoda_veleten'  # Публичный канал
@@ -68,7 +69,6 @@ def get_weather_forecast():
             days[day_key]['night'] = entry
         if dt.hour == 15:
             days[day_key]['day'] = entry
-    # Оставляем только первые 5 дней с обоими прогнозами
     forecast = []
     for d in sorted(days.keys()):
         if days[d]['night'] and days[d]['day']:
@@ -86,14 +86,12 @@ async def send_weather(context: ContextTypes.DEFAULT_TYPE):
         weekday = UA_WEEKDAYS[dt.weekday()]
         month_ua = UA_MONTHS[dt.month]
         msg += f"📅 {dt.day} {month_ua} ({weekday})\n"
-        # Ніч
         night = day['night']
         msg += (
             f"🌙 Ніч: {night['temp']:.1f}°C, {night['description']}, "
             f"вітер {night['wind_speed']} м/с, {night['wind_dir']}, "
             f"вологість {night['humidity']}%\n"
         )
-        # День
         daypart = day['day']
         msg += (
             f"☀️ День: {daypart['temp']:.1f}°C, {daypart['description']}, "
@@ -127,7 +125,7 @@ async def run_send_weather(app):
 
 def start_scheduler(app, loop):
     scheduler = BackgroundScheduler(timezone="Europe/Kiev")
-    scheduler.add_job(lambda: asyncio.run_coroutine_threadsafe(run_send_weather(app), loop), 'interval', minutes=1)
+    scheduler.add_job(lambda: asyncio.run_coroutine_threadsafe(run_send_weather(app), loop), 'interval', minutes=60)
     scheduler.start()
 
 def main():
@@ -136,7 +134,7 @@ def main():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     threading.Thread(target=start_scheduler, args=(app, loop), daemon=True).start()
-    print("Бот запущен и будет отправлять прогноз каждый день в 9:00 в канал @pogoda_veleten")
+    print("Бот запущен і буде відправляти прогноз кожну годину в канал @pogoda_veleten")
     try:
         loop.run_forever()
     except KeyboardInterrupt:
