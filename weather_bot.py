@@ -146,7 +146,7 @@ async def run_send_weather(app):
 
 def start_scheduler(app, loop):
     scheduler = BackgroundScheduler(timezone="Europe/Kiev")
-    scheduler.add_job(lambda: asyncio.run_coroutine_threadsafe(run_send_weather(app), loop), 'interval', minutes=1)
+    scheduler.add_job(lambda: asyncio.run_coroutine_threadsafe(run_send_weather(app), loop), 'interval', minutes=3)
     scheduler.start()
 
 def main():
