@@ -54,6 +54,7 @@ def get_weather_forecast():
     response = requests.get(url, timeout=10)
     data = response.json()
     days = {}
+    rain_keywords = ['дощ', 'гроза']
     for item in data['list']:
         dt = datetime.datetime.fromtimestamp(item['dt'])
         day_key = dt.date()
@@ -67,18 +68,50 @@ def get_weather_forecast():
             'description': ua_desc,
             'desc_raw': weather_desc,  # для жирного
             'time': dt.strftime('%H:%M'),
+            'hour': dt.hour,
         }
         if day_key not in days:
-            days[day_key] = {'date': dt, 'night': None, 'day': None}
+            days[day_key] = {
+                'date': dt,
+                'night': None,
+                'day': None,
+                'rain_night': [],
+                'rain_day': []
+            }
+        # Сохраняем ночной и дневной прогноз (как было)
         if dt.hour == 3:
             days[day_key]['night'] = entry
         if dt.hour == 15:
             days[day_key]['day'] = entry
+        # Определяем периоды дождя
+        is_rain = any(k in weather_desc for k in rain_keywords)
+        # Ночь: 20:00–23:00 и 0:00–5:00 (текущая ночь — с 20:00 предыдущего дня до 6:00 текущего)
+        # День: 6:00–19:00 (06:00 включительно, 20:00 не включительно)
+        if 6 <= dt.hour < 20:
+            if is_rain:
+                days[day_key]['rain_day'].append(dt)
+        else:
+            # Для ночи: если 0:00–5:00 — это ночь текущего дня, если 20:00–23:00 — это ночь следующего дня
+            if is_rain:
+                if dt.hour < 6:
+                    days[day_key]['rain_night'].append(dt)
+                else:
+                    # 20:00–23:00 — это ночь следующего дня
+                    next_day = day_key + datetime.timedelta(days=1)
+                    if next_day not in days:
+                        days[next_day] = {
+                            'date': dt + datetime.timedelta(days=1),
+                            'night': None,
+                            'day': None,
+                            'rain_night': [],
+                            'rain_day': []
+                        }
+                    days[next_day]['rain_night'].append(dt)
     # Гарантируем 5 дней, даже если нет ночи/дня
     all_dates = sorted([datetime.date.today() + datetime.timedelta(days=i) for i in range(5)])
     forecast = []
     for d in all_dates:
-        day = days.get(d, {'date': datetime.datetime.combine(d, datetime.time()), 'night': None, 'day': None})
+        day = days.get(d, {'date': datetime.datetime.combine(d, datetime.time()), 'night': None, 'day': None, 'rain_night': [], 'rain_day': []})
         forecast.append(day)
     return forecast
 
@@ -93,36 +126,56 @@ async def send_weather(context: ContextTypes.DEFAULT_TYPE):
         msg += f"📅 {dt.day} {month_ua} ({weekday})\n"
         night = day['night']
         if night:
-            desc = night['description']
-            desc_raw = night.get('desc_raw', '')
-            desc_bold = f"<b>{desc}</b>" if desc_raw in [
-                'легкий дощ', 'хмарно', 'ясно', 'чисте небо', 'мінлива хмарність',
-                'похмуро', 'дощ', 'гроза', 'сніг', 'туман', 'невеликий дощ', 'рвані хмари', 'уривчасті хмари'
-            ] else desc
-            msg += (
-                f"<b>🌙 Ніч: {night['temp']:.1f}°C</b>, {desc_bold}\n"
-                f"вітер {night['wind_speed']} м/с, {night['wind_dir']}, вологість {night['humidity']}%\n"
-            )
+            night_str = f"{night['temp']:.1f}°C | {night['description']} | 💨 {night['wind_speed']} м/с | 💧 {night['humidity']}%"
+            msg += f"🌙 Ніч: {night_str}\n"
         else:
-            msg += "<b>🌙 Ніч:</b> —\n"
-        msg += "\n"  # Пропуск строки между ночью и днём
+            msg += "🌙 Ніч: –\n"
+        # Добавляем периоды дождя ночью
+        if day.get('rain_night'):
+            rain_periods = []
+            rain_times = [dt.strftime('%H:%M') for dt in sorted(day['rain_night'])]
+            # Группируем подряд идущие интервалы
+            from itertools import groupby
+            from operator import itemgetter
+            hours = [int(t[:2]) for t in rain_times]
+            groups = []
+            for k, g in groupby(enumerate(hours), lambda x: x[0] - x[1]):
+                group = list(map(itemgetter(1), g))
+                groups.append(group)
+            for group in groups:
+                if group:
+                    start = f"{group[0]:02d}:00"
+                    end = f"{(group[-1]+3)%24:02d}:00"  # 3 часа шаг
+                    rain_periods.append(f"🌧 Ймовірний дощ з {start} по {end}")
+            for period in rain_periods:
+                msg += period + "\n"
         daypart = day['day']
         if daypart:
-            desc = daypart['description']
-            desc_raw = daypart.get('desc_raw', '')
-            desc_bold = f"<b>{desc}</b>" if desc_raw in [
-                'легкий дощ', 'хмарно', 'ясно', 'чисте небо', 'мінлива хмарність',
-                'похмуро', 'дощ', 'гроза', 'сніг', 'туман', 'невеликий дощ', 'рвані хмари', 'уривчасті хмари'
-            ] else desc
-            msg += (
-                f"<b>☀️ День: {daypart['temp']:.1f}°C</b>, {desc_bold}\n"
-                f"вітер {daypart['wind_speed']} м/с, {daypart['wind_dir']}, вологість {daypart['humidity']}%\n"
-            )
+            day_str = f"{daypart['temp']:.1f}°C | {daypart['description']} | 💨 {daypart['wind_speed']} м/с | 💧 {daypart['humidity']}%"
+            msg += f"☀️ День: {day_str}\n"
         else:
-            msg += "<b>☀️ День:</b> —\n"
+            msg += "☀️ День: –\n"
+        # Добавляем периоды дождя днём
+        if day.get('rain_day'):
+            rain_periods = []
+            rain_times = [dt.strftime('%H:%M') for dt in sorted(day['rain_day'])]
+            from itertools import groupby
+            from operator import itemgetter
+            hours = [int(t[:2]) for t in rain_times]
+            groups = []
+            for k, g in groupby(enumerate(hours), lambda x: x[0] - x[1]):
+                group = list(map(itemgetter(1), g))
+                groups.append(group)
+            for group in groups:
+                if group:
+                    start = f"{group[0]:02d}:00"
+                    end = f"{(group[-1]+3)%24:02d}:00"
+                    rain_periods.append(f"🌧 Ймовірний дощ з {start} по {end}")
+            for period in rain_periods:
+                msg += period + "\n"
         if i < len(forecast) - 1:
-            msg += "\n\n"
-    msg += "\n\n🎯 Велетеньский прогноз \n☁️☀️ Оновлення щодня — будь у курсі 🌦\n#погода #велетень"
+            msg += "\n"  # Разделение между днями
+    msg += "\n🎯 Велетеньский прогноз \n☁️☀️ Оновлення щодня — будь у курсі 🌦\n#погода #велетень"
     try:
         print("[send_weather] Відправка повідомлення у Telegram...")
         await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='HTML')
@@ -147,7 +200,8 @@ async def run_send_weather(app):
 
 def start_scheduler(app, loop):
     scheduler = BackgroundScheduler(timezone="Europe/Kiev")
-    scheduler.add_job(lambda: asyncio.run_coroutine_threadsafe(run_send_weather(app), loop), 'cron', hour=9, minute=0)
+    scheduler.add_job(lambda: asyncio.run_coroutine_threadsafe(run_send_weather(app), loop), 'cron', hour=8, minute=0)
+    scheduler.add_job(lambda: asyncio.run_coroutine_threadsafe(run_send_weather(app), loop), 'cron', hour=20, minute=0)
     scheduler.start()
 
 def main():
